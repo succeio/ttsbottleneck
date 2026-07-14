@@ -3,10 +3,10 @@ import OpenAI from "openai";
 
 const client = new OpenAI({
 
-  apiKey: "ollama",
+  apiKey: process.env.LLM_API_KEY ?? "ollama",
 
   baseURL:
-    process.env.OLLAMA_URL,
+    process.env.LLM_URL ?? process.env.OLLAMA_URL,
 
 });
 
@@ -18,7 +18,7 @@ export async function translate(
  const result =
  await client.chat.completions.create({
 
-   model:"qwen3:0.6b",
+   model: process.env.LLM_MODEL ?? "qwen3:0.6b",
 
    temperature:0,
 

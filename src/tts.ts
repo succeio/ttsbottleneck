@@ -13,7 +13,7 @@ export async function synthesize(
 
       body: JSON.stringify({
         model: "tts-1",
-        voice: "af_alloy",
+        voice: "af_sarah",
         input: text,
         response_format: "pcm",
       }),

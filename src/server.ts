@@ -41,6 +41,24 @@ const server = app.listen(
 
 
 
+class TaskQueue {
+  private queue: Promise<any> = Promise.resolve();
+
+  enqueue<T>(task: () => Promise<T>): Promise<T> {
+    const next = this.queue.then(task);
+    this.queue = next.catch(() => {});
+    return next;
+  }
+}
+
+
+
+function cleanWord(w: string): string {
+  return w.toLowerCase().replace(/[^a-z0-9а-яё]/g, "");
+}
+
+
+
 const wss = new WebSocketServer({
   server,
 });
@@ -58,6 +76,11 @@ wss.on(
 
     const deepgram =
       createDeepgram();
+
+    const queue = new TaskQueue();
+    let latestTranscript = "";
+    let debounceTimer: NodeJS.Timeout | null = null;
+    let processedText = "";
 
 
 
@@ -89,62 +112,62 @@ wss.on(
           const transcript =
             msg.channel
               ?.alternatives?.[0]
-              ?.transcript;
+              ?.transcript?.trim();
 
 
-          if (
-            transcript &&
-            msg.is_final
-          ) {
-
-            console.log(
-              "STT:",
-              transcript
-            );
-
-
-            const translated =
-              await translate(
-                transcript
-              );
-
-
-            console.log(
-              "TRANSLATION:",
-              translated
-            );
-
-
-            const audio =
-              await synthesize(
-                translated
-              );
-
-            console.log(
-              "TTS bytes:",
-              audio.length
-            );
-
-            if (
-              client.readyState === 1
-            ) {
-
-              client.send(
-                audio,
-                {
-                  binary: true
-                }
-              );
-
-              console.log(
-                "Sending audio:",
-                audio.length
-              );
-
-            }
-
+          if (!transcript) {
+            return;
           }
 
+          if (transcript === processedText) {
+            if (msg.is_final) {
+              processedText = "";
+            }
+            return;
+          }
+
+          latestTranscript = transcript;
+
+          if (debounceTimer) {
+            clearTimeout(debounceTimer);
+            debounceTimer = null;
+          }
+
+          const triggerTranslation = () => {
+            const textToTranslate = latestTranscript;
+            if (!textToTranslate || textToTranslate === processedText) {
+              return;
+            }
+
+            processedText = textToTranslate;
+            latestTranscript = "";
+
+            queue.enqueue(async () => {
+              try {
+                console.log("STT segment:", textToTranslate);
+                const translated = await translate(textToTranslate);
+                console.log("TRANSLATION:", translated);
+                const audio = await synthesize(translated);
+                console.log("TTS bytes:", audio.length);
+
+                if (client.readyState === 1) {
+                  client.send(audio, { binary: true });
+                  console.log("Sending audio:", audio.length);
+                }
+              } catch (err) {
+                console.error("Queue task error:", err);
+              }
+            });
+          };
+
+          if (msg.is_final) {
+            triggerTranslation();
+            processedText = "";
+          } else {
+            debounceTimer = setTimeout(() => {
+              triggerTranslation();
+            }, 1500); // 1.5 seconds debounce
+          }
 
         } catch(error) {
 
@@ -217,6 +240,12 @@ wss.on(
         console.log(
           "Browser disconnected"
         );
+
+
+        if (debounceTimer) {
+          clearTimeout(debounceTimer);
+          debounceTimer = null;
+        }
 
 
         if (

@@ -42,7 +42,7 @@ async function loadOutputs() {
             let label = d.label || `Microphone (${d.deviceId.slice(0, 5)}...)`;
             // Поясняем названия виртуальных кабелей
             if (label.includes("CABLE Output")) {
-                label += " (Виртуальный микрофон / Вход для перевода звука из программ)";
+                label += " (Виртуальный кабель / Вход для перевода звука из программ)";
             }
             o.textContent = label;
             inputs.appendChild(o);
@@ -54,7 +54,7 @@ async function loadOutputs() {
             let label = d.label || `Speaker (${d.deviceId.slice(0, 5)}...)`;
             // Поясняем названия виртуальных кабелей
             if (label.includes("CABLE Input")) {
-                label += " (Виртуальный кабель / Вывод звука в другие программы)";
+                label += " (Виртуальный микрофон / Вывод звука в другие программы)";
             }
             o.textContent = label;
             outputs.appendChild(o);
