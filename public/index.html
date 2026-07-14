@@ -1,0 +1,148 @@
+<!doctype html>
+<html>
+<head>
+    <meta charset="utf-8">
+    <title>AI Translator</title>
+</head>
+<body>
+
+<h2>Russian → English translator</h2>
+
+<button id="start">Start microphone</button>
+<br><br>
+
+<label>Input:</label>
+<select id="inputs"></select>
+<br>
+
+<label>Output:</label>
+<select id="outputs"></select>
+
+<script>
+let ws;
+let audioContext;
+let micProcessor;
+let playerProcessor;
+
+const button = document.getElementById("start");
+const outputs = document.getElementById("outputs");
+const inputs = document.getElementById("inputs");
+
+async function loadOutputs() {
+    // Очищаем списки перед заполнением
+    inputs.innerHTML = "";
+    outputs.innerHTML = "";
+
+    const devices = await navigator.mediaDevices.enumerateDevices();
+
+    devices.forEach(d => {
+        if (d.kind === "audioinput") {
+            const o = document.createElement("option");
+            o.value = d.deviceId;
+            o.textContent = d.label || `Microphone (${d.deviceId.slice(0, 5)}...)`;
+            inputs.appendChild(o);
+        }
+
+        if (d.kind === "audiooutput") {
+            const o = document.createElement("option");
+            o.value = d.deviceId;
+            o.textContent = d.label || `Speaker (${d.deviceId.slice(0, 5)}...)`;
+            outputs.appendChild(o);
+        }
+    });
+}
+
+button.onclick = async () => {
+    console.log("START");
+
+    const inputId = inputs.value;
+
+    try {
+        const stream = await navigator.mediaDevices.getUserMedia({
+            audio: {
+                // Исползуем ideal вместо exact, чтобы избежать OverconstrainedError
+                deviceId: inputId ? { ideal: inputId } : undefined,
+                channelCount: 1,
+                echoCancellation: false,
+                noiseSuppression: false
+            }
+        });
+
+        console.log("MIC OK");
+
+        ws = new WebSocket(`ws://${location.host}`);
+        ws.binaryType = "arraybuffer";
+
+        ws.onopen = () => {
+            console.log("WS CONNECTED");
+        };
+
+        audioContext = new AudioContext({
+            sampleRate: 16000
+        });
+
+        console.log("Audio sample rate:", audioContext.sampleRate);
+
+        await audioContext.audioWorklet.addModule("audio-worklet.js");
+        await audioContext.audioWorklet.addModule("player-worklet.js");
+
+        /* Микрофон */
+        const source = audioContext.createMediaStreamSource(stream);
+
+        micProcessor = new AudioWorkletNode(audioContext, "pcm-processor");
+
+        micProcessor.port.onmessage = (event) => {
+            if (ws.readyState === 1) {
+                ws.send(event.data);
+            }
+        };
+
+        source.connect(micProcessor);
+        micProcessor.connect(audioContext.destination);
+
+        /* Вывод */
+        playerProcessor = new AudioWorkletNode(audioContext, "player-processor");
+        playerProcessor.connect(audioContext.destination);
+
+        if (audioContext.setSinkId && outputs.value) {
+            await audioContext.setSinkId(outputs.value);
+        }
+
+        outputs.onchange = async () => {
+            if (audioContext?.setSinkId) {
+                await audioContext.setSinkId(outputs.value);
+                console.log("Output changed:", outputs.value);
+            }
+        };
+
+        ws.onmessage = (event) => {
+            console.log("AUDIO RECEIVED", event.data.byteLength);
+            playerProcessor.port.postMessage(event.data);
+        };
+
+    } catch (err) {
+        console.error("Error starting audio stream:", err);
+    }
+};
+
+// Инициализация при загрузке страницы
+async function init() {
+    try {
+        // Запрашиваем доступ к мику сразу, чтобы enumerateDevices() вернул реальные лейблы устройств
+        const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+        // Гасим временный стрим
+        stream.getTracks().forEach(track => track.stop());
+    } catch (e) {
+        console.warn("Permission denied or no microphone found context:", e);
+    }
+
+    // Загружаем устройства в select-боксы
+    await loadOutputs();
+    console.log("READY");
+}
+
+init();
+</script>
+
+</body>
+</html>
