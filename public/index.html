@@ -39,14 +39,24 @@ async function loadOutputs() {
         if (d.kind === "audioinput") {
             const o = document.createElement("option");
             o.value = d.deviceId;
-            o.textContent = d.label || `Microphone (${d.deviceId.slice(0, 5)}...)`;
+            let label = d.label || `Microphone (${d.deviceId.slice(0, 5)}...)`;
+            // Поясняем названия виртуальных кабелей
+            if (label.includes("CABLE Output")) {
+                label += " (Виртуальный микрофон / Вход для перевода звука из программ)";
+            }
+            o.textContent = label;
             inputs.appendChild(o);
         }
 
         if (d.kind === "audiooutput") {
             const o = document.createElement("option");
             o.value = d.deviceId;
-            o.textContent = d.label || `Speaker (${d.deviceId.slice(0, 5)}...)`;
+            let label = d.label || `Speaker (${d.deviceId.slice(0, 5)}...)`;
+            // Поясняем названия виртуальных кабелей
+            if (label.includes("CABLE Input")) {
+                label += " (Виртуальный кабель / Вывод звука в другие программы)";
+            }
+            o.textContent = label;
             outputs.appendChild(o);
         }
     });
@@ -58,9 +68,25 @@ button.onclick = async () => {
     const inputId = inputs.value;
 
     try {
+        // Очищаем предыдущие ресурсы, чтобы не плодить утечки памяти и дублирующиеся потоки
+        if (audioContext) {
+            try {
+                await audioContext.close();
+            } catch (e) {
+                console.error("Error closing old AudioContext:", e);
+            }
+        }
+        if (ws) {
+            try {
+                ws.close();
+            } catch (e) {
+                console.error("Error closing old WebSocket:", e);
+            }
+        }
+
         const stream = await navigator.mediaDevices.getUserMedia({
             audio: {
-                // Исползуем ideal вместо exact, чтобы избежать OverconstrainedError
+                // Используем ideal вместо exact, чтобы избежать OverconstrainedError
                 deviceId: inputId ? { ideal: inputId } : undefined,
                 channelCount: 1,
                 echoCancellation: false,
@@ -80,6 +106,10 @@ button.onclick = async () => {
         audioContext = new AudioContext({
             sampleRate: 16000
         });
+        
+        if (audioContext.state === "suspended") {
+            await audioContext.resume();
+        }
 
         console.log("Audio sample rate:", audioContext.sampleRate);
 
@@ -88,7 +118,6 @@ button.onclick = async () => {
 
         /* Микрофон */
         const source = audioContext.createMediaStreamSource(stream);
-
         micProcessor = new AudioWorkletNode(audioContext, "pcm-processor");
 
         micProcessor.port.onmessage = (event) => {
@@ -97,22 +126,64 @@ button.onclick = async () => {
             }
         };
 
+        // Подключаем микрофон к процессору для отправки данных, но НЕ подключаем к destination (чтобы не слышать себя)
         source.connect(micProcessor);
-        micProcessor.connect(audioContext.destination);
 
         /* Вывод */
         playerProcessor = new AudioWorkletNode(audioContext, "player-processor");
-        playerProcessor.connect(audioContext.destination);
+        
+        // Создаем MediaStream destination для перенаправления вывода
+        const mediaStreamDest = audioContext.createMediaStreamDestination();
+        playerProcessor.connect(mediaStreamDest);
 
-        if (audioContext.setSinkId && outputs.value) {
-            await audioContext.setSinkId(outputs.value);
+        // Находим или создаем невидимый HTML-элемент <audio> в DOM для надежного воспроизведения
+        let audioEl = document.getElementById("hidden-player");
+        if (!audioEl) {
+            audioEl = document.createElement("audio");
+            audioEl.id = "hidden-player";
+            audioEl.style.display = "none";
+            document.body.appendChild(audioEl);
+        }
+        audioEl.srcObject = mediaStreamDest.stream;
+        audioEl.play().catch(err => console.error("Audio play error:", err));
+
+        // Функция для надежного переключения устройства вывода
+        const setOutputDevice = async (deviceId) => {
+            if (!deviceId) return;
+            
+            console.log("Applying output device selection:", deviceId);
+
+            // 1. В первую очередь задаем устройство для HTML-элемента <audio> (который реально воспроизводит звук)
+            if (audioEl.setSinkId) {
+                try {
+                    await audioEl.setSinkId(deviceId);
+                    console.log("HTMLAudioElement output device set successfully:", deviceId);
+                } catch (err) {
+                    console.error("Failed to set sinkId on HTMLAudioElement:", err);
+                }
+            } else {
+                console.warn("setSinkId is not supported on HTMLMediaElement in this browser.");
+            }
+
+            // 2. Также дублируем для самого AudioContext (если поддерживается браузером)
+            if (audioContext.setSinkId) {
+                try {
+                    await audioContext.setSinkId(deviceId);
+                    console.log("AudioContext output device set successfully:", deviceId);
+                } catch (err) {
+                    console.warn("Failed to set sinkId on AudioContext:", err);
+                }
+            }
+        };
+
+        // Задаем начальное устройство вывода
+        if (outputs.value) {
+            await setOutputDevice(outputs.value);
         }
 
+        // Обновляем устройство при изменении в выпадающем списке
         outputs.onchange = async () => {
-            if (audioContext?.setSinkId) {
-                await audioContext.setSinkId(outputs.value);
-                console.log("Output changed:", outputs.value);
-            }
+            await setOutputDevice(outputs.value);
         };
 
         ws.onmessage = (event) => {
