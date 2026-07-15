@@ -58,8 +58,8 @@ KOKORO_URL=http://localhost:8880/v1
 
 3. Откройте приложение в браузере по адресу:
    ```
-   http://localhost:3000
-   ```
+    http://localhost:13433
+    ```
 
 ---
 
