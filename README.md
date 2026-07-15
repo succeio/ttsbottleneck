@@ -31,11 +31,10 @@ docker run -d \
 
 ```env
 # API ключ Deepgram для распознавания речи
-DEEPGRAM_API_KEY=14d1106a34a1bb4e52e75865d33c81b1b5e6d7ac
-
+DEEPGRAM_API_KEY=
 # Настройки перевода (Cherry API / Gemini)
-LLM_URL=https://cherryapi.duckdns.org:1337/gemini-antigravity/v1
-LLM_API_KEY=sk-8a19e1425c017ea808114f85f5e53f3c
+LLM_URL=https:///v1
+LLM_API_KEY=
 LLM_MODEL=gemini-3.5-flash-minimal
 
 # Настройки локальной озвучки (Kokoro FastAPI)
