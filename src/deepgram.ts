@@ -11,7 +11,7 @@ export function createDeepgram() {
     "&sample_rate=16000" +
     "&channels=1" +
     "&interim_results=true" +
-    "&endpointing=500" +
+    "&endpointing=1000" +
     "&punctuate=true",
     {
       headers:{

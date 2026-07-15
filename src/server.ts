@@ -78,9 +78,8 @@ wss.on(
       createDeepgram();
 
     const queue = new TaskQueue();
-    let latestTranscript = "";
+    let processedWordsHistory: string[] = [];
     let debounceTimer: NodeJS.Timeout | null = null;
-    let processedText = "";
 
 
 
@@ -112,40 +111,47 @@ wss.on(
           const transcript =
             msg.channel
               ?.alternatives?.[0]
-              ?.transcript?.trim();
+              ?.transcript;
 
 
           if (!transcript) {
             return;
           }
 
-          if (transcript === processedText) {
-            if (msg.is_final) {
-              processedText = "";
-            }
+          const words = transcript.trim().split(/\s+/).filter(Boolean);
+          if (words.length === 0) {
             return;
           }
 
-          latestTranscript = transcript;
+          // Align history to find rollback point in case interim hypothesis changed
+          let commonPrefixLength = 0;
+          const maxCheck = Math.min(processedWordsHistory.length, words.length);
+          for (let i = 0; i < maxCheck; i++) {
+            if (cleanWord(processedWordsHistory[i]) === cleanWord(words[i])) {
+              commonPrefixLength++;
+            } else {
+              break;
+            }
+          }
+
+          processedWordsHistory = processedWordsHistory.slice(0, commonPrefixLength);
 
           if (debounceTimer) {
             clearTimeout(debounceTimer);
             debounceTimer = null;
           }
 
-          const triggerTranslation = () => {
-            const textToTranslate = latestTranscript;
-            if (!textToTranslate || textToTranslate === processedText) {
-              return;
+          let currentSegmentWords: string[] = [];
+
+          const triggerTranslation = (segmentText: string) => {
+            if (debounceTimer) {
+              clearTimeout(debounceTimer);
+              debounceTimer = null;
             }
-
-            processedText = textToTranslate;
-            latestTranscript = "";
-
             queue.enqueue(async () => {
               try {
-                console.log("STT segment:", textToTranslate);
-                const translated = await translate(textToTranslate);
+                console.log("STT segment:", segmentText);
+                const translated = await translate(segmentText);
                 console.log("TRANSLATION:", translated);
                 const audio = await synthesize(translated);
                 console.log("TTS bytes:", audio.length);
@@ -160,13 +166,39 @@ wss.on(
             });
           };
 
+          for (let i = processedWordsHistory.length; i < words.length; i++) {
+            const word = words[i];
+            currentSegmentWords.push(word);
+
+            // Only split on punctuation if it is NOT the last word of the interim transcript
+            const isPunctuation = /[.?!,;:]$/.test(word) && (i < words.length - 1);
+            const isMaxLength = currentSegmentWords.length >= 18;
+
+            if (isPunctuation || isMaxLength) {
+              const segmentText = currentSegmentWords.join(" ");
+              processedWordsHistory.push(...currentSegmentWords);
+              currentSegmentWords = [];
+              triggerTranslation(segmentText);
+            }
+          }
+
+          if (currentSegmentWords.length > 0) {
+            const segmentText = currentSegmentWords.join(" ");
+            if (msg.is_final) {
+              processedWordsHistory.push(...currentSegmentWords);
+              currentSegmentWords = [];
+              triggerTranslation(segmentText);
+            } else {
+              debounceTimer = setTimeout(() => {
+                processedWordsHistory.push(...currentSegmentWords);
+                triggerTranslation(segmentText);
+                currentSegmentWords = [];
+              }, 1000); // 1.0 second pause debounce
+            }
+          }
+
           if (msg.is_final) {
-            triggerTranslation();
-            processedText = "";
-          } else {
-            debounceTimer = setTimeout(() => {
-              triggerTranslation();
-            }, 1500); // 1.5 seconds debounce
+            processedWordsHistory = [];
           }
 
         } catch(error) {
